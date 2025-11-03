@@ -6,9 +6,8 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR — vídeos por ordem (sem JSON)</title>
+  <title>MindAR — Teste de 1 Target (parametrizável)</title>
 
-  <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js" defer></script>
 
@@ -16,123 +15,83 @@
     html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
     body, a-scene { width: 100vw; height: 100vh; }
     .a-canvas, canvas { background: transparent !important; display: block; }
-
-    /* Caixa azul discreta no topo */
     #hint {
       position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-      background: rgba(0, 94, 255, 0.85);
-      border-radius: 12px; padding: 6px 14px; text-align: center;
-      font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
-      color: #fff; pointer-events: none; user-select: none; z-index: 9999;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      background: rgba(0, 94, 255, 0.85); color: #fff; border-radius: 12px;
+      padding: 6px 14px; font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
+      z-index: 9999; pointer-events: none; user-select:none; box-shadow: 0 2px 6px rgba(0,0,0,.25);
     }
-
-    /* Logo inferior ampliada */
-    #logo {
-      position: fixed; bottom: 20px; left: 0; right: 0;
-      display: flex; justify-content: center; pointer-events: none; z-index: 9999;
+    #logo { position: fixed; bottom: 20px; left: 0; right: 0; display:flex; justify-content:center; z-index:9999; pointer-events:none; }
+    #logo img { max-width: 80vw; height:auto; display:block; }
+    #status {
+      position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,.6); color:#0f0; font: 11px/1.3 monospace;
+      padding: 6px 10px; border-radius:8px; z-index:9999; display:none;
     }
-    #logo img { max-width: 80vw; height: auto; display: block; }
   </style>
 </head>
 <body>
 
-  <!-- Frase e logo (UI fixa fora da cena) -->
-  <div id="hint">aponte a câmera para a carta</div>
-  <div id="logo">
-    <img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" />
-  </div>
+<div id="hint">aponte a câmera para a carta</div>
+<div id="status"></div>
+<div id="logo"><img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO"/></div>
 
-  <a-scene
-    mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
-    renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
-    embedded
-    vr-mode-ui="enabled:false"
-    device-orientation-permission-ui="enabled:false"
-    style="width:100vw; height:100vh;">
+<a-scene id="scene"
+  renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
+  embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false"
+  style="width:100vw; height:100vh;">
+  <a-assets id="assets" timeout="15000">
+    <video id="vid" preload="metadata" playsinline webkit-playsinline muted loop crossorigin="anonymous"></video>
+  </a-assets>
 
-    <a-assets id="assets" timeout="15000"></a-assets>
+  <a-camera look-controls="enabled:false"></a-camera>
+  <a-entity id="anchor" mindar-image-target="targetIndex: 0">
+    <a-video id="plane" src="#vid" position="0 0 0.01" width="1"></a-video>
+  </a-entity>
+</a-scene>
 
-    <a-camera look-controls="enabled:false"></a-camera>
-    <a-entity id="anchors"></a-entity>
-  </a-scene>
+<script>
+  const qs = new URLSearchParams(location.search);
+  const MIND = qs.get('mind') || 'target01.mind';     // ex.: target01.mind
+  const VIDEO = qs.get('video') || '1.mp4';           // ex.: 1.mp4
+  const CB = 'cb=' + Date.now();
 
-  <script>
-    // ===== CONFIGURE AQUI a quantidade de targets no seu targets.mind =====
-    const NUM_TARGETS = 2; // target 01..NUM_TARGETS → vídeos "1.mp4" .. "NUM_TARGETS.mp4"
+  const statusEl = document.getElementById('status');
+  const sceneEl = document.getElementById('scene');
+  const vid = document.getElementById('vid');
+  const plane = document.getElementById('plane');
 
-    // ===== IMPLEMENTAÇÃO =====
-    const sceneEl = document.querySelector('a-scene');
-    const anchorsRoot = document.getElementById('anchors');
-    const assets = document.getElementById('assets');
+  // Aplica o .mind no a-scene DEPOIS que o elemento existe
+  sceneEl.setAttribute('mindar-image', `imageTargetSrc: ./${MIND}; maxTrack: 1`);
 
-    // Cache-bust forte por load (evita vídeo antigo do cache)
-    const CACHE_BUST = 'cb=' + Date.now();
+  // define o vídeo com cache-bust
+  vid.setAttribute('src', `./${VIDEO}?${CB}`);
 
-    function makeVideoAsset(id, src) {
-      const v = document.createElement('video');
-      v.id = id;
-      v.setAttribute('preload', 'metadata');
-      v.setAttribute('playsinline', '');
-      v.setAttribute('webkit-playsinline', '');
-      v.setAttribute('muted', '');   // permite autoplay em mobile
-      v.setAttribute('loop', '');
-      v.setAttribute('crossorigin', 'anonymous');
-      v.src = src;
-      assets.appendChild(v);
-      return v;
+  function show(msg) { statusEl.style.display='block'; statusEl.innerHTML = msg; }
+
+  // Ajusta plano ao aspect do vídeo
+  function setAspect() {
+    if (vid.videoWidth && vid.videoHeight) {
+      const w = 1.0, h = w * (vid.videoHeight/vid.videoWidth);
+      plane.setAttribute('width', w);
+      plane.setAttribute('height', h.toFixed(5));
     }
+  }
+  if (vid.readyState >= 1) setAspect();
+  else vid.addEventListener('loadedmetadata', setAspect, { once:true });
 
-    function makePlane(videoId) {
-      const p = document.createElement('a-video');
-      p.setAttribute('src', '#' + videoId);
-      p.setAttribute('position', '0 0 0.01');
-      p.setAttribute('width', '1'); // <a-video> ajusta altura proporcional automaticamente
-      return p;
-    }
+  // Eventos
+  const anchor = document.getElementById('anchor');
+  anchor.addEventListener('targetFound', async () => {
+    try { await vid.play(); } catch(e) {}
+  });
+  anchor.addEventListener('targetLost', () => { try { vid.pause(); } catch(e) {} });
 
-    async function setup() {
-      anchorsRoot.innerHTML = '';
-      assets.innerHTML = '';
+  // Mensagens de estado úteis para depurar caminho/arquivo
+  sceneEl.addEventListener('arReady', () => { /* ok */ });
+  sceneEl.addEventListener('arError', (e) => { show('arError: ' + (e?.detail?.error || 'verifique HTTPS/permissões de câmera')); });
 
-      const videos = [];
-      for (let i = 0; i < NUM_TARGETS; i++) {
-        const human = i + 1;
-        const file = human + '.mp4';           // "1.mp4", "2.mp4", ...
-        const url  = './' + file + '?' + CACHE_BUST;
-
-        const vidId = 'vid_' + i;
-        const vidEl = makeVideoAsset(vidId, url);
-        videos.push(vidEl);
-
-        const anchor = document.createElement('a-entity');
-        anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
-
-        const plane = makePlane(vidId);
-        anchor.appendChild(plane);
-        anchorsRoot.appendChild(anchor);
-
-        anchor.addEventListener('targetFound', async () => {
-          // pausa os outros vídeos
-          videos.forEach((v, j) => { if (j !== i) { try { v.pause(); } catch(_){} } });
-          try { await vidEl.play(); } catch(e) {}
-        });
-
-        anchor.addEventListener('targetLost', () => {
-          try { vidEl.pause(); } catch(_) {}
-        });
-      }
-    }
-
-    (async () => {
-      await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once: true }));
-      await new Promise(res => {
-        const done = () => res();
-        sceneEl.addEventListener('arReady', done, { once: true });
-        setTimeout(done, 2000);
-      });
-      setup();
-    })();
-  </script>
+  // Se quiser ativar logging: console.log(MIND, VIDEO);
+</script>
 </body>
 </html>
