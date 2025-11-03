@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR MindAR — 1 vídeo por target (mapeado por targets.json)</title>
+  <title>WebAR MindAR — Mapeamento por ORDEM (targets.json → vídeos)</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
@@ -22,17 +22,24 @@
       color: #fff; pointer-events: none; user-select: none; z-index: 9999;
       box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     }
-
     #logo {
       position: fixed; bottom: 20px; left: 0; right: 0;
       display: flex; justify-content: center; pointer-events: none; z-index: 9999;
     }
     #logo img { max-width: 80vw; height: auto; display: block; }
+
+    /* Opcional: diagnóstico do índice detectado */
+    #debug {
+      position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.6); color: #fff; font: 12px/1.2 monospace;
+      padding: 6px 10px; border-radius: 8px; z-index: 9999; display: none;
+    }
   </style>
 </head>
 <body>
 
   <div id="hint">aponte a câmera para a carta</div>
+  <div id="debug"></div>
 
   <div id="logo">
     <img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" />
@@ -56,7 +63,13 @@
     const sceneEl = document.querySelector('a-scene');
     const anchorsRoot = document.getElementById('anchors');
     const assets = document.getElementById('assets');
+    const debugEl = document.getElementById('debug');
 
+    // Mostrar índice detectado em tela para diagnóstico (mude para true se quiser ver)
+    const DEBUG_SHOW_INDEX = false;
+    if (DEBUG_SHOW_INDEX) debugEl.style.display = 'block';
+
+    // Cria um asset <video> isolado por target
     function createVideoAsset(id, src) {
       const v = document.createElement('video');
       v.id = id;
@@ -66,65 +79,57 @@
       v.setAttribute('muted', '');
       v.setAttribute('loop', '');
       v.setAttribute('crossorigin', 'anonymous');
-      v.src = src;
+      v.src = src; // src final vindo do JSON (pode ter extensão, subpasta, etc.)
       assets.appendChild(v);
       return v;
     }
 
-    // usa <a-video> para reduzir problemas de material/texture cache
+    // Usa <a-video> (mantém aspect ratio automaticamente)
     function createVideoPlane(videoId) {
-      const vplane = document.createElement('a-video');
-      vplane.setAttribute('src', '#' + videoId);
-      vplane.setAttribute('position', '0 0 0.01');
-      vplane.setAttribute('width', '1'); // altura ajustada automaticamente pelo a-video mantendo aspecto
-      // Nota: <a-video> mantém aspect ratio do asset; se precisar forçar, podemos setar height depois de loadedmetadata
-      return vplane;
+      const el = document.createElement('a-video');
+      el.setAttribute('src', '#' + videoId);
+      el.setAttribute('position', '0 0 0.01');
+      el.setAttribute('width', '1'); // height ajustado pelo a-video mantendo proporção
+      return el;
     }
 
-    function setup(names) {
+    function setupWithOrderedVideos(videoList) {
       anchorsRoot.innerHTML = '';
-      names.forEach((base, i) => {
-        const videoId = 'vid_' + i; // índice confiável
-        const videoSrc = './' + base + '.mp4';
+      const videos = []; // manter referência para pausar todos menos o ativo
 
-        const videoEl = createVideoAsset(videoId, videoSrc);
+      videoList.forEach((videoPath, index) => {
+        const videoId = 'vid_' + index;
+        const videoEl = createVideoAsset(videoId, encodeURI(videoPath));
+        videos.push(videoEl);
 
         const anchor = document.createElement('a-entity');
-        anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
-        anchor.dataset.basename = base;
+        anchor.setAttribute('mindar-image-target', 'targetIndex: ' + index);
 
-        const vplane = createVideoPlane(videoId);
-        anchor.appendChild(vplane);
+        const plane = createVideoPlane(videoId);
+        anchor.appendChild(plane);
         anchorsRoot.appendChild(anchor);
 
         anchor.addEventListener('targetFound', async () => {
-          try { await videoEl.play(); } catch(e) { /* interação pode ser necessária */ }
-        });
-        anchor.addEventListener('targetLost', () => {
-          try { videoEl.pause(); } catch(e) {}
+          if (DEBUG_SHOW_INDEX) debugEl.textContent = 'targetFound index=' + index;
+          // pausa os demais
+          videos.forEach((v, i) => { if (i !== index) { try { v.pause(); } catch(_){} } });
+          // toca o correspondente
+          try { await videoEl.play(); } catch(e) { /* toque do usuário pode ser necessário */ }
         });
 
-        // ajuste fino do height se necessário, após metadata
-        const updateSize = () => {
-          const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-          if (!vw || !vh) return;
-          const aspect = vh / vw;
-          const width = 1.0;
-          const height = width * aspect;
-          vplane.setAttribute('width', width);
-          vplane.setAttribute('height', height.toFixed(5));
-        };
-        if (videoEl.readyState >= 1) updateSize();
-        else videoEl.addEventListener('loadedmetadata', updateSize, { once: true });
+        anchor.addEventListener('targetLost', () => {
+          if (DEBUG_SHOW_INDEX) debugEl.textContent = 'targetLost  index=' + index;
+          try { videoEl.pause(); } catch(_) {}
+        });
       });
     }
 
-    async function loadNamesFromJSON() {
+    async function loadOrderedVideosFromJSON() {
       const res = await fetch('./targets.json', { cache: 'no-store' });
       if (!res.ok) throw new Error('targets.json não encontrado');
       const arr = await res.json();
       if (!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) {
-        throw new Error('targets.json inválido. Esperado: ["COMER","PRECISAR", ...]');
+        throw new Error('targets.json inválido. Esperado: ["COMER.mp4","PRECISAR.mp4", ...]');
       }
       return arr;
     }
@@ -138,12 +143,12 @@
       });
 
       try {
-        const names = await loadNamesFromJSON();
-        setup(names);
+        const orderedVideos = await loadOrderedVideosFromJSON();
+        setupWithOrderedVideos(orderedVideos);
       } catch (e) {
         console.error(e);
-        // fallback explícito com 1 alvo para evitar comportamento confuso
-        setup(['DEFAULT']);
+        // fallback minimalista
+        setupWithOrderedVideos(['COMER.mp4']);
       }
     }
 
