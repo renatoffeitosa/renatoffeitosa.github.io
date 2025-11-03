@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR MindAR — Vídeo por target (um vídeo por alvo)</title>
+  <title>WebAR MindAR — 1 vídeo por target (mapeado por targets.json)</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
@@ -57,7 +57,6 @@
     const anchorsRoot = document.getElementById('anchors');
     const assets = document.getElementById('assets');
 
-    // Util: cria um vídeo asset
     function createVideoAsset(id, src) {
       const v = document.createElement('video');
       v.id = id;
@@ -67,105 +66,70 @@
       v.setAttribute('muted', '');
       v.setAttribute('loop', '');
       v.setAttribute('crossorigin', 'anonymous');
-      v.setAttribute('src', src);
+      v.src = src;
       assets.appendChild(v);
       return v;
     }
 
-    // Ajusta plane ao aspect do vídeo quando metadata carregar
-    function bindAspectToVideo(planeEl, videoEl) {
-      const update = () => {
-        const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-        if (!vw || !vh) return;
-        const aspect = vh / vw;
-        const w = 1.0;
-        planeEl.setAttribute('width', w);
-        planeEl.setAttribute('height', (w * aspect).toFixed(5));
-      };
-      if (videoEl.readyState >= 1) update();
-      else videoEl.addEventListener('loadedmetadata', update, { once: true });
+    // usa <a-video> para reduzir problemas de material/texture cache
+    function createVideoPlane(videoId) {
+      const vplane = document.createElement('a-video');
+      vplane.setAttribute('src', '#' + videoId);
+      vplane.setAttribute('position', '0 0 0.01');
+      vplane.setAttribute('width', '1'); // altura ajustada automaticamente pelo a-video mantendo aspecto
+      // Nota: <a-video> mantém aspect ratio do asset; se precisar forçar, podemos setar height depois de loadedmetadata
+      return vplane;
     }
 
-    // Cria anchors e vídeos por nome
     function setup(names) {
       anchorsRoot.innerHTML = '';
       names.forEach((base, i) => {
-        const videoId = 'vid_' + base;
-        const videoSrc = './' + base + '.mp4'; // extensão padronizada
+        const videoId = 'vid_' + i; // índice confiável
+        const videoSrc = './' + base + '.mp4';
+
         const videoEl = createVideoAsset(videoId, videoSrc);
 
         const anchor = document.createElement('a-entity');
         anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
         anchor.dataset.basename = base;
 
-        const plane = document.createElement('a-plane');
-        plane.setAttribute('position', '0 0 0.01');
-        plane.setAttribute('width', '1');
-        plane.setAttribute('height', '0.5625');
-        plane.setAttribute('material', `shader: flat; src: #${videoId}; transparent:false; color:#FFF;`);
-
-        bindAspectToVideo(plane, videoEl);
-
-        anchor.appendChild(plane);
+        const vplane = createVideoPlane(videoId);
+        anchor.appendChild(vplane);
         anchorsRoot.appendChild(anchor);
 
         anchor.addEventListener('targetFound', async () => {
-          try { await videoEl.play(); } catch(e) { console.warn('Autoplay bloqueado até interação do usuário.', e); }
+          try { await videoEl.play(); } catch(e) { /* interação pode ser necessária */ }
         });
         anchor.addEventListener('targetLost', () => {
           try { videoEl.pause(); } catch(e) {}
         });
+
+        // ajuste fino do height se necessário, após metadata
+        const updateSize = () => {
+          const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+          if (!vw || !vh) return;
+          const aspect = vh / vw;
+          const width = 1.0;
+          const height = width * aspect;
+          vplane.setAttribute('width', width);
+          vplane.setAttribute('height', height.toFixed(5));
+        };
+        if (videoEl.readyState >= 1) updateSize();
+        else videoEl.addEventListener('loadedmetadata', updateSize, { once: true });
       });
     }
 
-    async function tryGetNamesFromMindAR() {
-      try {
-        const sys = sceneEl.systems['mindar-image-system'];
-        if (!sys) return null;
-
-        // Garante que o controller exista
-        await new Promise(res => {
-          const wait = () => (sys.controller ? res() : requestAnimationFrame(wait));
-          wait();
-        });
-
-        const ctrl = sys.controller;
-        const candidates = [
-          ['imageTarget','labels'],
-          ['imageTarget','names'],
-          ['_imageTarget','labels'],
-          ['_imageTarget','names'],
-          ['imageTarget','_targetLabels']
-        ];
-        for (const path of candidates) {
-          let obj = ctrl;
-          for (const k of path) obj = obj?.[k];
-          if (Array.isArray(obj) && obj.length) {
-            return obj.map(s => (''+s).replace(/\.[a-z0-9]+$/i, ''));
-          }
-        }
-        const alt = ctrl._targets || ctrl.targets;
-        if (Array.isArray(alt) && alt.length && alt.every(t => typeof t?.name === 'string')) {
-          return alt.map(t => t.name.replace(/\.[a-z0-9]+$/i, ''));
-        }
-      } catch (e) {
-        console.warn('tryGetNamesFromMindAR falhou:', e);
+    async function loadNamesFromJSON() {
+      const res = await fetch('./targets.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error('targets.json não encontrado');
+      const arr = await res.json();
+      if (!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) {
+        throw new Error('targets.json inválido. Esperado: ["COMER","PRECISAR", ...]');
       }
-      return null;
-    }
-
-    async function tryGetNamesFromJSON() {
-      try {
-        const res = await fetch('./targets.json', { cache: 'no-store' });
-        if (!res.ok) return null;
-        const arr = await res.json();
-        if (Array.isArray(arr) && arr.every(s => typeof s === 'string')) return arr;
-      } catch (e) {}
-      return null;
+      return arr;
     }
 
     async function init() {
-      // Espera cena e AR prontos
       await new Promise(resolve => sceneEl.hasLoaded ? resolve() : sceneEl.addEventListener('loaded', resolve, { once: true }));
       await new Promise(resolve => {
         const done = () => resolve();
@@ -173,14 +137,14 @@
         setTimeout(done, 2000);
       });
 
-      let names = await tryGetNamesFromMindAR();
-      if (!names) names = await tryGetNamesFromJSON();
-      if (!names) {
-        console.error('Não foi possível obter nomes de targets. Crie ./targets.json (ex.: ["COMER","PRECISAR"]).');
-        names = ['DEFAULT'];
+      try {
+        const names = await loadNamesFromJSON();
+        setup(names);
+      } catch (e) {
+        console.error(e);
+        // fallback explícito com 1 alvo para evitar comportamento confuso
+        setup(['DEFAULT']);
       }
-
-      setup(names);
     }
 
     init();
