@@ -6,8 +6,9 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>MindAR — Teste de 1 Target (parametrizável)</title>
+  <title>WebAR — múltiplos vídeos por ordem (via targets.json)</title>
 
+  <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js" defer></script>
 
@@ -15,83 +16,126 @@
     html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
     body, a-scene { width: 100vw; height: 100vh; }
     .a-canvas, canvas { background: transparent !important; display: block; }
+
+    /* UI fixa (fora da cena) */
     #hint {
       position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-      background: rgba(0, 94, 255, 0.85); color: #fff; border-radius: 12px;
-      padding: 6px 14px; font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
-      z-index: 9999; pointer-events: none; user-select:none; box-shadow: 0 2px 6px rgba(0,0,0,.25);
+      background: rgba(0, 94, 255, 0.85);
+      border-radius: 12px; padding: 6px 14px; text-align: center;
+      font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
+      color: #fff; pointer-events: none; user-select: none; z-index: 9999;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     }
-    #logo { position: fixed; bottom: 20px; left: 0; right: 0; display:flex; justify-content:center; z-index:9999; pointer-events:none; }
-    #logo img { max-width: 80vw; height:auto; display:block; }
-    #status {
-      position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,.6); color:#0f0; font: 11px/1.3 monospace;
-      padding: 6px 10px; border-radius:8px; z-index:9999; display:none;
+    #logo {
+      position: fixed; bottom: 20px; left: 0; right: 0;
+      display: flex; justify-content: center; pointer-events: none; z-index: 9999;
     }
+    #logo img { max-width: 80vw; height: auto; display: block; }
   </style>
 </head>
 <body>
 
-<div id="hint">aponte a câmera para a carta</div>
-<div id="status"></div>
-<div id="logo"><img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO"/></div>
+  <div id="hint">aponte a câmera para a carta</div>
+  <div id="logo"><img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" /></div>
 
-<a-scene id="scene"
-  renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
-  embedded vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false"
-  style="width:100vw; height:100vh;">
-  <a-assets id="assets" timeout="15000">
-    <video id="vid" preload="metadata" playsinline webkit-playsinline muted loop crossorigin="anonymous"></video>
-  </a-assets>
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
+    renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
+    embedded
+    vr-mode-ui="enabled:false"
+    device-orientation-permission-ui="enabled:false"
+    style="width:100vw; height:100vh;">
 
-  <a-camera look-controls="enabled:false"></a-camera>
-  <a-entity id="anchor" mindar-image-target="targetIndex: 0">
-    <a-video id="plane" src="#vid" position="0 0 0.01" width="1"></a-video>
-  </a-entity>
-</a-scene>
+    <a-assets id="assets" timeout="15000"></a-assets>
 
-<script>
-  const qs = new URLSearchParams(location.search);
-  const MIND = qs.get('mind') || 'target01.mind';     // ex.: target01.mind
-  const VIDEO = qs.get('video') || '1.mp4';           // ex.: 1.mp4
-  const CB = 'cb=' + Date.now();
+    <a-camera look-controls="enabled:false"></a-camera>
+    <a-entity id="anchors"></a-entity>
+  </a-scene>
 
-  const statusEl = document.getElementById('status');
-  const sceneEl = document.getElementById('scene');
-  const vid = document.getElementById('vid');
-  const plane = document.getElementById('plane');
+  <script>
+    // Este build usa SOMENTE o targets.json para mapear:
+    // targetIndex 0 → targets[0]  (ex.: "1.mp4")
+    // targetIndex 1 → targets[1]  (ex.: "2.mp4")
+    // ...e assim por diante.
+    // Basta editar o targets.json e trocar o targets.mind.
+    const CACHE_BUST = 'cb=' + Date.now();
+    const sceneEl = document.querySelector('a-scene');
+    const anchorsRoot = document.getElementById('anchors');
+    const assets = document.getElementById('assets');
 
-  // Aplica o .mind no a-scene DEPOIS que o elemento existe
-  sceneEl.setAttribute('mindar-image', `imageTargetSrc: ./${MIND}; maxTrack: 1`);
-
-  // define o vídeo com cache-bust
-  vid.setAttribute('src', `./${VIDEO}?${CB}`);
-
-  function show(msg) { statusEl.style.display='block'; statusEl.innerHTML = msg; }
-
-  // Ajusta plano ao aspect do vídeo
-  function setAspect() {
-    if (vid.videoWidth && vid.videoHeight) {
-      const w = 1.0, h = w * (vid.videoHeight/vid.videoWidth);
-      plane.setAttribute('width', w);
-      plane.setAttribute('height', h.toFixed(5));
+    function makeVideoAsset(id, src) {
+      const v = document.createElement('video');
+      v.id = id;
+      v.setAttribute('preload', 'metadata');
+      v.setAttribute('playsinline', '');
+      v.setAttribute('webkit-playsinline', '');
+      v.setAttribute('muted', '');  // autoplay mobile
+      v.setAttribute('loop', '');
+      v.setAttribute('crossorigin', 'anonymous');
+      v.src = src;
+      assets.appendChild(v);
+      return v;
     }
-  }
-  if (vid.readyState >= 1) setAspect();
-  else vid.addEventListener('loadedmetadata', setAspect, { once:true });
 
-  // Eventos
-  const anchor = document.getElementById('anchor');
-  anchor.addEventListener('targetFound', async () => {
-    try { await vid.play(); } catch(e) {}
-  });
-  anchor.addEventListener('targetLost', () => { try { vid.pause(); } catch(e) {} });
+    function makePlane(videoId) {
+      const p = document.createElement('a-video');
+      p.setAttribute('src', '#' + videoId);
+      p.setAttribute('position', '0 0 0.01');
+      p.setAttribute('width', '1');
+      return p;
+    }
 
-  // Mensagens de estado úteis para depurar caminho/arquivo
-  sceneEl.addEventListener('arReady', () => { /* ok */ });
-  sceneEl.addEventListener('arError', (e) => { show('arError: ' + (e?.detail?.error || 'verifique HTTPS/permissões de câmera')); });
+    async function loadTargetsList() {
+      const res = await fetch('./targets.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error('targets.json não encontrado');
+      const arr = await res.json();
+      if (!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) {
+        throw new Error('targets.json inválido. Esperado: ["1.mp4","2.mp4", ...]');
+      }
+      return arr;
+    }
 
-  // Se quiser ativar logging: console.log(MIND, VIDEO);
-</script>
+    async function setup() {
+      anchorsRoot.innerHTML = '';
+      assets.innerHTML = '';
+
+      const list = await loadTargetsList();
+      const videos = [];
+
+      list.forEach((file, i) => {
+        const url = './' + file + '?' + CACHE_BUST;  // cache-bust forte
+        const vidId = 'vid_' + i;
+        const vidEl = makeVideoAsset(vidId, url);
+        videos.push(vidEl);
+
+        const anchor = document.createElement('a-entity');
+        anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
+
+        const plane = makePlane(vidId);
+        anchor.appendChild(plane);
+        anchorsRoot.appendChild(anchor);
+
+        anchor.addEventListener('targetFound', async () => {
+          videos.forEach((v, j) => { if (j !== i) { try { v.pause(); } catch(_){} } });
+          try { await vidEl.play(); } catch(e) {}
+        });
+        anchor.addEventListener('targetLost', () => { try { vidEl.pause(); } catch(_) {} });
+      });
+    }
+
+    (async () => {
+      // Aguarda MindAR iniciar a câmera antes de montar os anchors
+      await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once: true }));
+      await new Promise(res => {
+        const done = () => res();
+        sceneEl.addEventListener('arReady', done, { once: true });
+        setTimeout(done, 2000);
+      });
+      setup().catch(err => {
+        console.error(err);
+        alert(err.message);
+      });
+    })();
+  </script>
 </body>
 </html>
