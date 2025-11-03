@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR — iOS Safari robusto (JSON + cover) • targets 5,5×8 cm</title>
+  <title>WebAR — robusto (JSON + cover) • iOS OK • targets 5,5×8 cm</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
@@ -39,18 +39,27 @@
     }
     #logo img {
       display: block; height: auto;
-      /* Redução de ~20%: se antes estava em 40vw/220px, reduza 20% */
       max-width: 176px; /* 220px * 0.8 */
       width: 32vw;      /* 40vw * 0.8 */
     }
 
-    /* Botão Reiniciar AR: ícone REFRESH.svg sem texto, lado direito, 20px da borda direita e inferior */
+    /* Botão Reiniciar AR: ícone REFRESH.svg sem texto, canto inferior direito, responsivo */
     #restartBtn {
-      position: fixed; right: 20px; bottom: calc(20px + var(--sa-bottom));
-      z-index: 9999; display: none; cursor: pointer; border: 0; background: transparent; padding: 0;
-      width: 52px; height: 52px;
+      position: fixed;
+      right: 20px;
+      bottom: calc(20px + var(--sa-bottom));
+      z-index: 9999;
+      display: none;
+      cursor: pointer;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      width: clamp(40px, 6vw, 64px);
+      height: clamp(40px, 6vw, 64px);
       filter: drop-shadow(0 4px 16px rgba(0,0,0,.25));
+      transition: transform .2s ease;
     }
+    #restartBtn:hover { transform: scale(1.05); }
     #restartBtn img { display: block; width: 100%; height: 100%; }
 
     /* Overlay iOS: botão Iniciar com box amarelo e fonte preta */
@@ -105,7 +114,7 @@
   </a-scene>
 
   <script>
-    // ===== Proporções dos targets (5,5 x 8 cm) =====
+    // ===== Proporção dos targets (5,5 x 8 cm) =====
     const DEFAULT_TARGET_ASPECT = 5.5 / 8; // 0.6875 (largura/altura)
     const TARGET_ASPECTS = []; // Use por índice se algum target tiver proporção diferente
 
@@ -145,7 +154,7 @@
     }
     function makePlane(){ const p = document.createElement('a-video'); p.setAttribute('position','0 0 0.01'); return p; }
 
-    // Cover para o retângulo do target mantendo proporção do vídeo
+    // Cover para o retângulo do target mantendo proporção do vídeo (sem mexer em opacidade/material)
     function fitVideoCoverToTarget(planeEl, videoEl, targetAspect){
       const widthTarget = 1.0, heightTarget = widthTarget / targetAspect;
       const vw = videoEl.videoWidth||0, vh = videoEl.videoHeight||0;
@@ -176,9 +185,7 @@
     function hideHintOnce(){
       if(!hintHid && hintEl){
         hintHid = true;
-        hintEl.style.transition = 'opacity .25s ease';
-        hintEl.style.opacity = '0';
-        setTimeout(()=> hintEl.style.display='none', 250);
+        hintEl.style.display = 'none';
       }
     }
 
@@ -193,7 +200,6 @@
 
         const anchor = document.createElement('a-entity'); anchor.setAttribute('mindar-image-target','targetIndex: '+i);
         const plane = makePlane(); plane.setAttribute('src', '#'+vidId);
-        plane.setAttribute('material', 'transparent:true; opacity:0'); // para fade-in suave
         anchor.appendChild(plane); anchorsRoot.appendChild(anchor);
 
         const tAspect = getTargetAspect(i);
@@ -201,20 +207,13 @@
         else vidEl.addEventListener('loadedmetadata',()=>fitVideoCoverToTarget(plane, vidEl, tAspect),{once:true});
 
         anchor.addEventListener('targetFound', async ()=>{
-          // fade-in
-          plane.setAttribute('animation__fadein','property=material.opacity;from=0;to=1;dur=220;easing=easeOutSine');
-          // pausa os demais
           videos.forEach((v,j)=>{ if(j!==i){ try{ v.pause(); }catch(_){}} });
-          try{ await vidEl.play(); }catch(e){}
+          try{ await vidEl.play(); }catch(e){ /* em iOS, toque em "Iniciar" */ }
           hideHintOnce();
         });
-        anchor.addEventListener('targetLost', ()=>{
-          plane.setAttribute('animation__fadeout','property=material.opacity;from=1;to=0;dur=200;easing=easeInSine');
-          setTimeout(()=>{ try{ vidEl.pause(); }catch(_){}} , 200);
-        });
+        anchor.addEventListener('targetLost', ()=>{ try{ vidEl.pause(); }catch(_){}});
       });
 
-      // iOS: overlay de início + mostrar botão de reinício
       if (isIOS) {
         iosOverlay.style.display = 'flex';
         restartBtn.style.display = 'block';
@@ -223,11 +222,10 @@
         restartBtn.style.display = 'block';
       }
 
-      // Reinício manual (ícone REFRESH)
-      restartBtn.onclick = () => safeRestartAR('manual');
+      restartBtn.onclick = () => safeRestartAR();
     }
 
-    // Robustez de sessão
+    // Robustez de sessão (sem mexer em material/opacidade)
     let restartedOnce = false;
     function safeRestartAR(){
       if(restartedOnce) return;
