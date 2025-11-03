@@ -2,157 +2,137 @@
 <html lang="pt-br">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR MindAR — Mapeamento por ORDEM (targets.json → vídeos)</title>
+  <title>WebAR — targets por ORDEM → vídeos N.mp4 (sem JSON)</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js" defer></script>
 
   <style>
-    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
-    .a-canvas, canvas { background: transparent !important; display: block; }
+    html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
     body, a-scene { width: 100vw; height: 100vh; }
 
-    #hint {
-      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-      background: rgba(0, 94, 255, 0.85);
-      border-radius: 12px; padding: 6px 14px; text-align: center;
-      font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
-      color: #fff; pointer-events: none; user-select: none; z-index: 9999;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    #hud {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.7); color: #0f0; font: 12px/1.35 monospace;
+      padding: 8px 12px; border-radius: 8px; z-index: 99999; min-width: 280px;
     }
-    #logo {
-      position: fixed; bottom: 20px; left: 0; right: 0;
-      display: flex; justify-content: center; pointer-events: none; z-index: 9999;
-    }
-    #logo img { max-width: 80vw; height: auto; display: block; }
-
-    /* Opcional: diagnóstico do índice detectado */
-    #debug {
-      position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,0.6); color: #fff; font: 12px/1.2 monospace;
-      padding: 6px 10px; border-radius: 8px; z-index: 9999; display: none;
-    }
+    #hud b { color: #fff; }
+    #hud .warn { color: #ff6; }
   </style>
 </head>
 <body>
 
-  <div id="hint">aponte a câmera para a carta</div>
-  <div id="debug"></div>
+<div id="hud">
+  <div><b>WebAR: ordem de targets → vídeos N.mp4</b></div>
+  <div id="status">Carregando...</div>
+</div>
 
-  <div id="logo">
-    <img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" />
-  </div>
+<a-scene
+  mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
+  renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
+  embedded
+  vr-mode-ui="enabled:false"
+  device-orientation-permission-ui="enabled:false"
+  style="width:100vw; height:100vh;">
 
-  <a-scene
-    mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
-    renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
-    embedded
-    vr-mode-ui="enabled:false"
-    device-orientation-permission-ui="enabled:false"
-    style="width:100vw; height:100vh;">
+  <a-assets id="assets" timeout="15000"></a-assets>
 
-    <a-assets timeout="15000" id="assets"></a-assets>
+  <a-camera look-controls="enabled:false"></a-camera>
+  <a-entity id="anchors"></a-entity>
+</a-scene>
 
-    <a-camera look-controls="enabled:false"></a-camera>
-    <a-entity id="anchors"></a-entity>
-  </a-scene>
+<script>
+  // ===== CONFIG =====
+  // Ajuste para a quantidade de alvos que existem no seu targets.mind:
+  const NUM_TARGETS = 2; // target 01..NUM_TARGETS → vídeos "1.mp4" .. "NUM_TARGETS.mp4"
+  const DEBUG = false;   // true para mostrar índice/arquivo no HUD
 
-  <script>
-    const sceneEl = document.querySelector('a-scene');
-    const anchorsRoot = document.getElementById('anchors');
-    const assets = document.getElementById('assets');
-    const debugEl = document.getElementById('debug');
+  // ===== IMPLEMENTAÇÃO =====
+  const sceneEl = document.querySelector('a-scene');
+  const anchorsRoot = document.getElementById('anchors');
+  const assets = document.getElementById('assets');
+  const statusEl = document.getElementById('status');
 
-    // Mostrar índice detectado em tela para diagnóstico (mude para true se quiser ver)
-    const DEBUG_SHOW_INDEX = false;
-    if (DEBUG_SHOW_INDEX) debugEl.style.display = 'block';
+  // Cache-bust forte por load
+  const CACHE_BUST = 'cb=' + Date.now();
 
-    // Cria um asset <video> isolado por target
-    function createVideoAsset(id, src) {
-      const v = document.createElement('video');
-      v.id = id;
-      v.setAttribute('preload', 'metadata');
-      v.setAttribute('playsinline', '');
-      v.setAttribute('webkit-playsinline', '');
-      v.setAttribute('muted', '');
-      v.setAttribute('loop', '');
-      v.setAttribute('crossorigin', 'anonymous');
-      v.src = src; // src final vindo do JSON (pode ter extensão, subpasta, etc.)
-      assets.appendChild(v);
-      return v;
-    }
+  function makeVideoAsset(id, src) {
+    const v = document.createElement('video');
+    v.id = id;
+    v.setAttribute('preload', 'metadata');
+    v.setAttribute('playsinline', '');
+    v.setAttribute('webkit-playsinline', '');
+    v.setAttribute('muted', '');   // autoplay em mobile
+    v.setAttribute('loop', '');
+    v.setAttribute('crossorigin', 'anonymous');
+    v.src = src;
+    assets.appendChild(v);
+    return v;
+  }
 
-    // Usa <a-video> (mantém aspect ratio automaticamente)
-    function createVideoPlane(videoId) {
-      const el = document.createElement('a-video');
-      el.setAttribute('src', '#' + videoId);
-      el.setAttribute('position', '0 0 0.01');
-      el.setAttribute('width', '1'); // height ajustado pelo a-video mantendo proporção
-      return el;
-    }
+  function makePlane(videoId) {
+    const p = document.createElement('a-video');
+    p.setAttribute('src', '#' + videoId);
+    p.setAttribute('position', '0 0 0.01');
+    p.setAttribute('width', '1'); // <a-video> ajusta altura conforme proporção
+    return p;
+  }
 
-    function setupWithOrderedVideos(videoList) {
-      anchorsRoot.innerHTML = '';
-      const videos = []; // manter referência para pausar todos menos o ativo
+  async function setup() {
+    anchorsRoot.innerHTML = '';
+    assets.innerHTML = '';
 
-      videoList.forEach((videoPath, index) => {
-        const videoId = 'vid_' + index;
-        const videoEl = createVideoAsset(videoId, encodeURI(videoPath));
-        videos.push(videoEl);
+    const videos = [];
+    for (let i = 0; i < NUM_TARGETS; i++) {
+      const human = i + 1;
+      const file = human + '.mp4';           // "1.mp4", "2.mp4", ...
+      const url  = './' + file + '?' + CACHE_BUST;
 
-        const anchor = document.createElement('a-entity');
-        anchor.setAttribute('mindar-image-target', 'targetIndex: ' + index);
+      const vidId = 'vid_' + i;
+      const vidEl = makeVideoAsset(vidId, url);
+      videos.push(vidEl);
 
-        const plane = createVideoPlane(videoId);
-        anchor.appendChild(plane);
-        anchorsRoot.appendChild(anchor);
+      const anchor = document.createElement('a-entity');
+      anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
 
-        anchor.addEventListener('targetFound', async () => {
-          if (DEBUG_SHOW_INDEX) debugEl.textContent = 'targetFound index=' + index;
-          // pausa os demais
-          videos.forEach((v, i) => { if (i !== index) { try { v.pause(); } catch(_){} } });
-          // toca o correspondente
-          try { await videoEl.play(); } catch(e) { /* toque do usuário pode ser necessário */ }
-        });
+      const plane = makePlane(vidId);
+      anchor.appendChild(plane);
+      anchorsRoot.appendChild(anchor);
 
-        anchor.addEventListener('targetLost', () => {
-          if (DEBUG_SHOW_INDEX) debugEl.textContent = 'targetLost  index=' + index;
-          try { videoEl.pause(); } catch(_) {}
-        });
-      });
-    }
-
-    async function loadOrderedVideosFromJSON() {
-      const res = await fetch('./targets.json', { cache: 'no-store' });
-      if (!res.ok) throw new Error('targets.json não encontrado');
-      const arr = await res.json();
-      if (!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) {
-        throw new Error('targets.json inválido. Esperado: ["COMER.mp4","PRECISAR.mp4", ...]');
-      }
-      return arr;
-    }
-
-    async function init() {
-      await new Promise(resolve => sceneEl.hasLoaded ? resolve() : sceneEl.addEventListener('loaded', resolve, { once: true }));
-      await new Promise(resolve => {
-        const done = () => resolve();
-        sceneEl.addEventListener('arReady', done, { once: true });
-        setTimeout(done, 2000);
+      anchor.addEventListener('targetFound', async () => {
+        // pausa os outros
+        videos.forEach((v, j) => { if (j !== i) { try { v.pause(); } catch(_){} } });
+        try {
+          await vidEl.play();
+          statusEl.innerHTML = 'targetFound index=<b>' + i + '</b> → ' + file;
+        } catch(e) {
+          statusEl.innerHTML = 'targetFound index=<b>' + i + '</b> → ' + file + ' <span class="warn">(toque na tela para iniciar)</span>';
+        }
+        if (DEBUG) console.log('targetFound', {index:i, file});
       });
 
-      try {
-        const orderedVideos = await loadOrderedVideosFromJSON();
-        setupWithOrderedVideos(orderedVideos);
-      } catch (e) {
-        console.error(e);
-        // fallback minimalista
-        setupWithOrderedVideos(['COMER.mp4']);
-      }
+      anchor.addEventListener('targetLost', () => {
+        try { vidEl.pause(); } catch(_) {}
+        if (DEBUG) console.log('targetLost', {index:i});
+      });
     }
+  }
 
-    init();
-  </script>
+  (async () => {
+    await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once: true }));
+    await new Promise(res => {
+      const done = () => res();
+      sceneEl.addEventListener('arReady', done, { once: true });
+      setTimeout(done, 2000);
+    });
+    statusEl.textContent = 'Pronto. Mire nas imagens 01, 02, ... → toca 1.mp4, 2.mp4, ...';
+    setup();
+  })();
+</script>
 </body>
 </html>
