@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>WebAR — iOS Safari robusto (JSON + cover)</title>
+
+  <!-- A-Frame + MindAR -->
+  <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js" defer></script>
+
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+    body, a-scene { width: 100vw; height: 100vh; }
+    .a-canvas, canvas { background: transparent !important; display: block; }
+
+    #hint {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0, 94, 255, 0.85);
+      border-radius: 12px; padding: 6px 14px; text-align: center;
+      font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
+      color: #fff; pointer-events: none; user-select: none; z-index: 9999;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    #logo {
+      position: fixed; bottom: 20px; left: 0; right: 0;
+      display: flex; justify-content: center; pointer-events: none; z-index: 9999;
+    }
+    #logo img { max-width: 80vw; height: auto; display: block; }
+
+    #iosOverlay {
+      position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.6); z-index: 10000;
+    }
+    #iosOverlay .card {
+      background: #101418; color: #fff; padding: 16px 18px; border-radius: 14px;
+      font: 500 14px/1.4 system-ui, -apple-system, Roboto, Arial, sans-serif;
+      text-align: center; width: min(86vw, 520px); box-shadow: 0 6px 24px rgba(0,0,0,.35);
+    }
+    #iosOverlay button, #restartBtn {
+      margin-top: 10px; padding: 10px 14px; border-radius: 10px; border: 0; cursor: pointer;
+      font: 600 14px/1 system-ui, -apple-system, Roboto, Arial, sans-serif;
+      background: #2d6bff; color: #fff;
+    }
+    #restartBtn {
+      position: fixed; right: 14px; bottom: 84px; z-index: 9999; display: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,.25);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="hint">aponte a câmera para a carta</div>
+  <div id="logo"><img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" /></div>
+
+  <button id="restartBtn" type="button">Reiniciar AR</button>
+
+  <div id="iosOverlay">
+    <div class="card">
+      <div>Para iniciar a AR no iPhone, toque em <b>Iniciar</b> para liberar a câmera e o vídeo.</div>
+      <button id="btnStart" type="button">Iniciar</button>
+    </div>
+  </div>
+
+  <a-scene id="scene"
+    renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
+    embedded
+    vr-mode-ui="enabled:false"
+    device-orientation-permission-ui="enabled:true"
+    style="width:100vw; height:100vh;">
+
+    <a-assets id="assets" timeout="15000"></a-assets>
+
+    <a-camera look-controls="enabled:false"></a-camera>
+    <a-entity id="anchors"></a-entity>
+  </a-scene>
+
+  <script>
+    const TARGET_ASPECTS = [];
+    const PAGE_BUST = 'pv=' + Date.now();
+    const sceneEl = document.getElementById('scene');
+    const anchorsRoot = document.getElementById('anchors');
+    const assets = document.getElementById('assets');
+    const iosOverlay = document.getElementById('iosOverlay');
+    const restartBtn = document.getElementById('restartBtn');
+    const btnStart = document.getElementById('btnStart');
+
+    sceneEl.setAttribute('mindar-image', `imageTargetSrc: ./targets.mind?${PAGE_BUST}; maxTrack: 1`);
+
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    function getTargetAspect(i){ const a = TARGET_ASPECTS[i]; return (typeof a==='number' && a>0)? a : 1.0; }
+
+    function makeVideoAsset(id, src){
+      const v = document.createElement('video');
+      v.id = id;
+      v.setAttribute('preload','metadata');
+      v.setAttribute('playsinline','');
+      v.setAttribute('webkit-playsinline','');
+      v.setAttribute('muted','');
+      v.setAttribute('loop','');
+      v.setAttribute('crossorigin','anonymous');
+      v.src = src;
+      assets.appendChild(v);
+      return v;
+    }
+    function makePlane(){ const p = document.createElement('a-video'); p.setAttribute('position','0 0 0.01'); return p; }
+
+    function fitVideoCoverToTarget(planeEl, videoEl, targetAspect){
+      const widthTarget = 1.0, heightTarget = widthTarget / targetAspect;
+      const vw = videoEl.videoWidth||0, vh = videoEl.videoHeight||0;
+      if(!vw || !vh){ videoEl.addEventListener('loadedmetadata',()=>fitVideoCoverToTarget(planeEl, videoEl, targetAspect),{once:true}); return; }
+      const aspectVideo = vw / vh;
+      let width = widthTarget, height = width / aspectVideo;
+      if(height < heightTarget){ width = heightTarget * aspectVideo; height = width / aspectVideo; }
+      planeEl.setAttribute('width', width.toFixed(5));
+      planeEl.setAttribute('height', height.toFixed(5));
+    }
+
+    async function loadTargetsList(){
+      const res = await fetch('./targets.json', { cache: 'no-store' });
+      if(!res.ok) throw new Error('targets.json não encontrado');
+      const arr = await res.json();
+      if(!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) throw new Error('targets.json inválido. Esperado: ["1.mp4","2.mp4", ...]');
+      return arr;
+    }
+
+    async function unlockIOSAutoplay(videos){
+      for(const v of videos){
+        try { await v.play(); v.pause(); v.currentTime = 0; } catch(_) {}
+      }
+    }
+
+    async function setup(){
+      anchorsRoot.innerHTML = ''; assets.innerHTML = '';
+      const list = await loadTargetsList(); const videos = [];
+      const bust = 'cb=' + Date.now();
+
+      list.forEach((file, i)=>{
+        const vidId = 'vid_'+i, url = './'+file+'?'+bust;
+        const vidEl = makeVideoAsset(vidId, url); videos.push(vidEl);
+
+        const anchor = document.createElement('a-entity'); anchor.setAttribute('mindar-image-target','targetIndex: '+i);
+        const plane = makePlane(); plane.setAttribute('src', '#'+vidId);
+        anchor.appendChild(plane); anchorsRoot.appendChild(anchor);
+
+        const tAspect = getTargetAspect(i);
+        if(vidEl.readyState>=1) fitVideoCoverToTarget(plane, vidEl, tAspect);
+        else vidEl.addEventListener('loadedmetadata',()=>fitVideoCoverToTarget(plane, vidEl, tAspect),{once:true});
+
+        anchor.addEventListener('targetFound', async ()=>{
+          videos.forEach((v,j)=>{ if(j!==i){ try{ v.pause(); }catch(_){}} });
+          try{ await vidEl.play(); }catch(e){}
+        });
+        anchor.addEventListener('targetLost', ()=>{ try{ vidEl.pause(); }catch(_){}});
+      });
+
+      if (isIOS) {
+        iosOverlay.style.display = 'flex';
+        restartBtn.style.display = 'block';
+        btnStart.onclick = async () => { await unlockIOSAutoplay(videos); iosOverlay.style.display = 'none'; };
+      } else {
+        restartBtn.style.display = 'block';
+      }
+
+      restartBtn.onclick = () => safeRestartAR('manual');
+    }
+
+    let restartedOnce = false;
+    function safeRestartAR(){
+      if(restartedOnce) return;
+      restartedOnce = true;
+      try{
+        const sys = sceneEl.systems['mindar-image-system'];
+        if(sys){ sys.stop?.(); setTimeout(()=> { sys.start?.(); restartedOnce=false; }, 400); }
+        else { location.replace(location.pathname + '?r=' + Date.now()); }
+      }catch(_){ location.replace(location.pathname + '?r=' + Date.now()); }
+    }
+
+    window.addEventListener('pageshow', (e)=>{ if(e.persisted){ location.replace(location.pathname + '?r=' + Date.now()); } });
+    window.addEventListener('webglcontextlost', (e)=>{ e.preventDefault(); location.replace(location.pathname + '?r=' + Date.now()); }, false);
+    document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ safeRestartAR(); } });
+    sceneEl.addEventListener('arError', ()=> safeRestartAR());
+
+    window.addEventListener('pagehide', ()=>{
+      try{ sceneEl.systems['mindar-image-system']?.stop?.(); }catch(_){}
+      document.querySelectorAll('video').forEach(v=>{ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(_){} });
+    });
+
+    (async ()=>{
+      await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once:true }));
+      await new Promise(res => { const done=()=>res(); sceneEl.addEventListener('arReady', done, { once:true }); setTimeout(done, 2000); });
+      setup().catch(err=>{ console.error(err); alert(err.message); });
+    })();
+  </script>
+</body>
+</html>
