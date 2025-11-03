@@ -2,167 +2,146 @@
 <html lang="pt-br">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR — targets por ORDEM → vídeos NN.mp4 (sem JSON)</title>
+  <title>WebAR MindAR — Target ↔ Vídeo por nome</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js" defer></script>
 
   <style>
-    html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+    .a-canvas, canvas { background: transparent !important; display: block; }
     body, a-scene { width: 100vw; height: 100vh; }
 
-    #hud {
-      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,0.7); color: #0f0; font: 12px/1.35 monospace;
-      padding: 8px 12px; border-radius: 8px; z-index: 99999; min-width: 280px;
+    /* Caixa azul da frase no topo */
+    #hint {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0, 94, 255, 0.85);
+      border-radius: 12px; padding: 6px 14px; text-align: center;
+      font: 400 10pt/1.2 system-ui, -apple-system, Roboto, Arial, sans-serif;
+      color: #fff; pointer-events: none; user-select: none; z-index: 9999;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
     }
-    #hud b { color: #fff; }
-    #hud .warn { color: #ff6; }
-    #hud .err { color: #f66; }
+
+    /* Logo inferior ampliada */
+    #logo {
+      position: fixed; bottom: 20px; left: 0; right: 0;
+      display: flex; justify-content: center; pointer-events: none; z-index: 9999;
+    }
+    #logo img { max-width: 80vw; height: auto; display: block; }
   </style>
 </head>
 <body>
 
-<div id="hud">
-  <div><b>WebAR: ordem de targets → vídeos NN.mp4</b></div>
-  <div id="status">Aguardando AR...</div>
-</div>
+  <!-- Caixa azul com a frase -->
+  <div id="hint">aponte a câmera para a carta</div>
 
-<a-scene
-  mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
-  renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
-  embedded
-  vr-mode-ui="enabled:false"
-  device-orientation-permission-ui="enabled:false"
-  style="width:100vw; height:100vh;">
+  <!-- Logo inferior -->
+  <div id="logo">
+    <img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" />
+  </div>
 
-  <a-assets id="assets" timeout="15000"></a-assets>
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
+    renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
+    embedded
+    vr-mode-ui="enabled:false"
+    device-orientation-permission-ui="enabled:false"
+    style="width:100vw; height:100vh;">
 
-  <a-camera look-controls="enabled:false"></a-camera>
-  <a-entity id="anchors"></a-entity>
-</a-scene>
+    <a-assets timeout="15000">
+      <!-- Um único elemento de vídeo reutilizado por todos os targets -->
+      <video id="vid" preload="metadata" playsinline webkit-playsinline muted loop crossorigin="anonymous"></video>
+    </a-assets>
 
-<script>
-  // ===== CONFIG =====
-  // Ajuste o número de targets existentes no seu targets.mind (ordem = targetIndex)
-  // index 0 → 01.mp4; index 1 → 02.mp4; index 2 → 03.mp4; ...
-  const NUM_TARGETS = 2; // <- edite aqui conforme sua quantidade real
-  const ZERO_PAD = 2;    // tamanho do padding nos nomes dos vídeos (01, 02, 03...)
+    <a-camera look-controls="enabled:false"></a-camera>
 
-  // Mostrar info de debug (índice/arquivo) no HUD
-  const DEBUG = false;
+    <!-- Raiz dos anchors criados dinamicamente -->
+    <a-entity id="anchors"></a-entity>
+  </a-scene>
 
-  // ===== IMPLEMENTAÇÃO =====
-  const sceneEl = document.querySelector('a-scene');
-  const anchorsRoot = document.getElementById('anchors');
-  const assets = document.getElementById('assets');
-  const statusEl = document.getElementById('status');
+  <script>
+    /**
+     * IMPORTANTE:
+     * Liste abaixo os nomes-base (sem extensão) dos ALVOS na MESMA ORDEM
+     * em que você compilou as imagens no targets.mind.
+     * Ex.: COMER.png → 'COMER'  → toca ./COMER.mp4
+     *      PLANTAR.png → 'PLANTAR' → toca ./PLANTAR.mp4
+     */
+    const TARGET_BASES = [
+      "COMER"
+      // Adicione mais nomes aqui, na ordem 0,1,2,... (conforme o targets.mind)
+    ];
 
-  // Sufixo único por load para matar cache (cache-bust forte)
-  const CACHE_BUST = 'cb=' + Date.now();
+    const anchorsRoot = document.getElementById('anchors');
+    const vid = document.getElementById('vid');
 
-  // Zero-pad helper
-  const pad = (num, size) => String(num).padStart(size, '0');
+    // Mantém o índice do target atualmente "travado" (quando visível)
+    let lockedIndex = null;
 
-  // Cria um <video> asset isolado
-  function createVideoAsset(id, src) {
-    const v = document.createElement('video');
-    v.id = id;
-    v.setAttribute('preload', 'metadata');
-    v.setAttribute('playsinline', '');
-    v.setAttribute('webkit-playsinline', '');
-    v.setAttribute('muted', '');
-    v.setAttribute('loop', '');
-    v.setAttribute('crossorigin', 'anonymous');
-    v.src = src;
-    assets.appendChild(v);
-    return v;
-  }
+    // Ajusta o aspecto do a-plane para o vídeo carregado
+    const setPlaneAspect = (planeEl) => {
+      if (!vid.videoWidth || !vid.videoHeight) return;
+      const aspect = vid.videoHeight / vid.videoWidth; // altura / largura
+      const w = 1.0; // largura padrão do plane no mundo AR
+      planeEl.setAttribute('width', w);
+      planeEl.setAttribute('height', (w * aspect).toFixed(5));
+    };
 
-  // <a-video> mantém aspect ratio automaticamente
-  function createVideoPlane(videoId) {
-    const plane = document.createElement('a-video');
-    plane.setAttribute('src', '#' + videoId);
-    plane.setAttribute('position', '0 0 0.01');
-    plane.setAttribute('width', '1'); // altura ajustada pelo próprio a-video
-    return plane;
-  }
-
-  // HEAD para checar presença de arquivo e também induzir "miss" no cache do CDN
-  async function headOk(url) {
-    try {
-      const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-      // aceitar seja qual for o content-type, pois alguns CDNs não retornam "video/*" no HEAD
-      return res.ok;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  async function setup() {
-    anchorsRoot.innerHTML = '';
-    assets.innerHTML = '';
-
-    const videos = [];
-    for (let i = 0; i < NUM_TARGETS; i++) {
-      const indexHuman = i + 1;
-      const filename = pad(indexHuman, ZERO_PAD) + '.mp4';
-      const url = './' + filename + (filename.includes('?') ? '&' : '?') + CACHE_BUST;
-
-      // checagem (opcional) — não bloqueia, só informa
-      headOk(url).then(ok => {
-        if (!ok && DEBUG) {
-          console.warn('Arquivo não encontrado (HEAD falhou):', filename);
-        }
-      });
-
-      const videoId = 'vid_' + i;
-      const videoEl = createVideoAsset(videoId, url);
-      videos.push(videoEl);
-
+    // Cria dinamicamente um anchor para cada target do .mind
+    TARGET_BASES.forEach((baseName, i) => {
       const anchor = document.createElement('a-entity');
       anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
 
-      const plane = createVideoPlane(videoId);
+      const plane = document.createElement('a-plane');
+      plane.setAttribute('position', '0 0 0.01');
+      plane.setAttribute('width', '1');
+      plane.setAttribute('height', '0.5625');
+      plane.setAttribute('material', 'shader: flat; src: #vid; transparent:false; color:#FFF;');
+
       anchor.appendChild(plane);
       anchorsRoot.appendChild(anchor);
 
+      // Quando o target é encontrado, trocamos o src do vídeo para <base>.mp4 e damos play
       anchor.addEventListener('targetFound', async () => {
-        // pausa demais
-        videos.forEach((v, j) => { if (j !== i) { try { v.pause(); } catch(_){} } });
-        // toca o correspondente
-        try {
-          await videoEl.play();
-          statusEl.innerHTML = 'targetFound index=<b>' + i + '</b> → ' + filename;
-        } catch (e) {
-          statusEl.innerHTML = 'targetFound index=<b>' + i + '</b> → ' + filename + ' <span class="warn">(toque na tela para iniciar)</span>';
+        // Se já há um target travado e não é este, ignora (maxTrack:1)
+        if (lockedIndex !== null && lockedIndex !== i) return;
+        lockedIndex = i;
+
+        const desiredSrc = `./${baseName}.mp4`;
+        if (vid.getAttribute('src') !== desiredSrc) {
+          vid.setAttribute('src', desiredSrc);
+          try { vid.load?.(); } catch (e) {}
         }
-        if (DEBUG) console.log('targetFound', {index:i, file:filename});
+
+        // Quando os metadados carregarem, ajusta o aspect do plane
+        if (vid.readyState >= 1) setPlaneAspect(plane);
+        else vid.addEventListener('loadedmetadata', () => setPlaneAspect(plane), { once: true });
+
+        try { await vid.play(); } catch (e) {
+          // Alguns navegadores exigem interação; se falhar, mantenha mudo/inline e tente novamente após interação
+          console.warn('Falha ao iniciar autoplay do vídeo:', e);
+        }
       });
 
+      // Quando o target se perde, pausa o vídeo e libera o lock
       anchor.addEventListener('targetLost', () => {
-        try { videoEl.pause(); } catch(_) {}
-        if (DEBUG) console.log('targetLost', {index:i});
+        if (lockedIndex === i) {
+          vid.pause();
+          lockedIndex = null;
+        }
       });
-    }
-  }
-
-  (async () => {
-    statusEl.textContent = 'Carregando cena...';
-    await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once: true }));
-    await new Promise(res => {
-      const done = () => res();
-      sceneEl.addEventListener('arReady', done, { once: true });
-      setTimeout(done, 2000);
     });
-    statusEl.textContent = 'Pronto. Mire nas imagens 01, 02, ... → vídeos 01.mp4, 02.mp4, ...';
-    setup();
-  })();
-</script>
+
+    // Pausa/retoma ao alternar abas
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) vid.pause();
+      else if (lockedIndex !== null) vid.play().catch(()=>{});
+    });
+
+    // Recupera em caso de perda de contexto WebGL
+    window.addEventListener('webglcontextlost', (e) => { e.preventDefault(); location.reload(); }, false);
+  </script>
 </body>
 </html>
