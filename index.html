@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR — vídeos por ordem (JSON) com cover no target</title>
+  <title>WebAR — vídeos por ordem (JSON) • robusto</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
@@ -37,8 +37,7 @@
   <div id="hint">aponte a câmera para a carta</div>
   <div id="logo"><img src="./LOGO_DUOMEMO.png" alt="LOGO_DUOMEMO" /></div>
 
-  <a-scene
-    mindar-image="imageTargetSrc: ./targets.mind; maxTrack: 1"
+  <a-scene id="scene"
     renderer="alpha:true; antialias:false; physicallyCorrectLights:false"
     embedded
     vr-mode-ui="enabled:false"
@@ -52,22 +51,30 @@
   </a-scene>
 
   <script>
-    // Informe a proporção (largura/altura) do target. Se vazio, assume quadrado (1.0) por target.
-    const TARGET_ASPECTS = []; // ex.: [1.0, 1.5, 16/9]
+    const TARGET_ASPECTS = []; // ex.: [1.0, 1.0]
 
-    const CACHE_BUST = 'cb=' + Date.now();
-    const sceneEl = document.querySelector('a-scene');
+    const PAGE_BUST = 'pv=' + Date.now();
+    const sceneEl = document.getElementById('scene');
     const anchorsRoot = document.getElementById('anchors');
     const assets = document.getElementById('assets');
+
+    // Cache-bust no arquivo .mind
+    sceneEl.setAttribute('mindar-image', `imageTargetSrc: ./targets.mind?${PAGE_BUST}; maxTrack: 1`);
 
     function getTargetAspect(i){ const a = TARGET_ASPECTS[i]; return (typeof a==='number' && a>0)? a : 1.0; }
 
     function makeVideoAsset(id, src){
       const v = document.createElement('video');
-      v.id = id; v.setAttribute('preload','metadata');
-      v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
-      v.setAttribute('muted',''); v.setAttribute('loop',''); v.setAttribute('crossorigin','anonymous');
-      v.src = src; assets.appendChild(v); return v;
+      v.id = id;
+      v.setAttribute('preload','metadata');
+      v.setAttribute('playsinline','');
+      v.setAttribute('webkit-playsinline','');
+      v.setAttribute('muted','');
+      v.setAttribute('loop','');
+      v.setAttribute('crossorigin','anonymous');
+      v.src = src;
+      assets.appendChild(v);
+      return v;
     }
     function makePlane(){ const p = document.createElement('a-video'); p.setAttribute('position','0 0 0.01'); return p; }
 
@@ -93,23 +100,47 @@
     async function setup(){
       anchorsRoot.innerHTML = ''; assets.innerHTML = '';
       const list = await loadTargetsList(); const videos = [];
+      const bust = 'cb=' + Date.now();
+
       list.forEach((file, i)=>{
-        const vidId = 'vid_'+i, url = './'+file+'?'+CACHE_BUST;
+        const vidId = 'vid_'+i, url = './'+file+'?'+bust;
         const vidEl = makeVideoAsset(vidId, url); videos.push(vidEl);
+
         const anchor = document.createElement('a-entity'); anchor.setAttribute('mindar-image-target','targetIndex: '+i);
-        const plane = makePlane(); plane.setAttribute('src', '#'+vidId); anchor.appendChild(plane); anchorsRoot.appendChild(anchor);
+        const plane = makePlane(); plane.setAttribute('src', '#'+vidId);
+        anchor.appendChild(plane); anchorsRoot.appendChild(anchor);
 
         const tAspect = getTargetAspect(i);
         if(vidEl.readyState>=1) fitVideoCoverToTarget(plane, vidEl, tAspect);
         else vidEl.addEventListener('loadedmetadata',()=>fitVideoCoverToTarget(plane, vidEl, tAspect),{once:true});
 
         anchor.addEventListener('targetFound', async ()=>{
-          videos.forEach((v,j)=>{ if(j!==i){ try{v.pause();}catch(_){}} });
+          videos.forEach((v,j)=>{ if(j!==i){ try{ v.pause(); }catch(_){}} });
           try{ await vidEl.play(); }catch(e){}
         });
         anchor.addEventListener('targetLost', ()=>{ try{ vidEl.pause(); }catch(_){}});
       });
     }
+
+    let restartedOnce = false;
+    function safeRestartAR(){
+      if(restartedOnce) return;
+      restartedOnce = true;
+      try{
+        const sys = sceneEl.systems['mindar-image-system'];
+        if(sys){ sys.stop?.(); setTimeout(()=> sys.start?.(), 350); }
+        else { location.replace(location.pathname + '?r=' + Date.now()); }
+      }catch(_){ location.replace(location.pathname + '?r=' + Date.now()); }
+    }
+
+    window.addEventListener('pageshow', (e)=>{ if(e.persisted){ location.replace(location.pathname + '?r=' + Date.now()); } });
+    window.addEventListener('webglcontextlost', (e)=>{ e.preventDefault(); location.replace(location.pathname + '?r=' + Date.now()); }, false);
+    document.addEventListener('visibilitychange', ()=>{ if(!document.hidden){ safeRestartAR(); } });
+    sceneEl.addEventListener('arError', ()=> safeRestartAR());
+    window.addEventListener('pagehide', ()=>{
+      try{ sceneEl.systems['mindar-image-system']?.stop?.(); }catch(_){}
+      document.querySelectorAll('video').forEach(v=>{ try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(_){} });
+    });
 
     (async ()=>{
       await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once:true }));
