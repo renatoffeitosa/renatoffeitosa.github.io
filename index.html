@@ -6,7 +6,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WebAR — múltiplos vídeos por ordem (via targets.json)</title>
+  <title>WebAR — vídeos por ordem (JSON) com cover no target</title>
 
   <!-- A-Frame + MindAR -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js" defer></script>
@@ -17,7 +17,6 @@
     body, a-scene { width: 100vw; height: 100vh; }
     .a-canvas, canvas { background: transparent !important; display: block; }
 
-    /* UI fixa (fora da cena) */
     #hint {
       position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
       background: rgba(0, 94, 255, 0.85);
@@ -53,88 +52,69 @@
   </a-scene>
 
   <script>
-    // Este build usa SOMENTE o targets.json para mapear:
-    // targetIndex 0 → targets[0]  (ex.: "1.mp4")
-    // targetIndex 1 → targets[1]  (ex.: "2.mp4")
-    // ...e assim por diante.
-    // Basta editar o targets.json e trocar o targets.mind.
+    // Informe a proporção (largura/altura) do target. Se vazio, assume quadrado (1.0) por target.
+    const TARGET_ASPECTS = []; // ex.: [1.0, 1.5, 16/9]
+
     const CACHE_BUST = 'cb=' + Date.now();
     const sceneEl = document.querySelector('a-scene');
     const anchorsRoot = document.getElementById('anchors');
     const assets = document.getElementById('assets');
 
-    function makeVideoAsset(id, src) {
+    function getTargetAspect(i){ const a = TARGET_ASPECTS[i]; return (typeof a==='number' && a>0)? a : 1.0; }
+
+    function makeVideoAsset(id, src){
       const v = document.createElement('video');
-      v.id = id;
-      v.setAttribute('preload', 'metadata');
-      v.setAttribute('playsinline', '');
-      v.setAttribute('webkit-playsinline', '');
-      v.setAttribute('muted', '');  // autoplay mobile
-      v.setAttribute('loop', '');
-      v.setAttribute('crossorigin', 'anonymous');
-      v.src = src;
-      assets.appendChild(v);
-      return v;
+      v.id = id; v.setAttribute('preload','metadata');
+      v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+      v.setAttribute('muted',''); v.setAttribute('loop',''); v.setAttribute('crossorigin','anonymous');
+      v.src = src; assets.appendChild(v); return v;
+    }
+    function makePlane(){ const p = document.createElement('a-video'); p.setAttribute('position','0 0 0.01'); return p; }
+
+    function fitVideoCoverToTarget(planeEl, videoEl, targetAspect){
+      const widthTarget = 1.0, heightTarget = widthTarget / targetAspect;
+      const vw = videoEl.videoWidth||0, vh = videoEl.videoHeight||0;
+      if(!vw || !vh){ videoEl.addEventListener('loadedmetadata',()=>fitVideoCoverToTarget(planeEl, videoEl, targetAspect),{once:true}); return; }
+      const aspectVideo = vw / vh;
+      let width = widthTarget, height = width / aspectVideo;
+      if(height < heightTarget){ width = heightTarget * aspectVideo; height = width / aspectVideo; }
+      planeEl.setAttribute('width', width.toFixed(5));
+      planeEl.setAttribute('height', height.toFixed(5));
     }
 
-    function makePlane(videoId) {
-      const p = document.createElement('a-video');
-      p.setAttribute('src', '#' + videoId);
-      p.setAttribute('position', '0 0 0.01');
-      p.setAttribute('width', '1');
-      return p;
-    }
-
-    async function loadTargetsList() {
+    async function loadTargetsList(){
       const res = await fetch('./targets.json', { cache: 'no-store' });
-      if (!res.ok) throw new Error('targets.json não encontrado');
+      if(!res.ok) throw new Error('targets.json não encontrado');
       const arr = await res.json();
-      if (!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) {
-        throw new Error('targets.json inválido. Esperado: ["1.mp4","2.mp4", ...]');
-      }
+      if(!Array.isArray(arr) || !arr.every(s => typeof s === 'string')) throw new Error('targets.json inválido. Esperado: ["1.mp4","2.mp4", ...]');
       return arr;
     }
 
-    async function setup() {
-      anchorsRoot.innerHTML = '';
-      assets.innerHTML = '';
+    async function setup(){
+      anchorsRoot.innerHTML = ''; assets.innerHTML = '';
+      const list = await loadTargetsList(); const videos = [];
+      list.forEach((file, i)=>{
+        const vidId = 'vid_'+i, url = './'+file+'?'+CACHE_BUST;
+        const vidEl = makeVideoAsset(vidId, url); videos.push(vidEl);
+        const anchor = document.createElement('a-entity'); anchor.setAttribute('mindar-image-target','targetIndex: '+i);
+        const plane = makePlane(); plane.setAttribute('src', '#'+vidId); anchor.appendChild(plane); anchorsRoot.appendChild(anchor);
 
-      const list = await loadTargetsList();
-      const videos = [];
+        const tAspect = getTargetAspect(i);
+        if(vidEl.readyState>=1) fitVideoCoverToTarget(plane, vidEl, tAspect);
+        else vidEl.addEventListener('loadedmetadata',()=>fitVideoCoverToTarget(plane, vidEl, tAspect),{once:true});
 
-      list.forEach((file, i) => {
-        const url = './' + file + '?' + CACHE_BUST;  // cache-bust forte
-        const vidId = 'vid_' + i;
-        const vidEl = makeVideoAsset(vidId, url);
-        videos.push(vidEl);
-
-        const anchor = document.createElement('a-entity');
-        anchor.setAttribute('mindar-image-target', 'targetIndex: ' + i);
-
-        const plane = makePlane(vidId);
-        anchor.appendChild(plane);
-        anchorsRoot.appendChild(anchor);
-
-        anchor.addEventListener('targetFound', async () => {
-          videos.forEach((v, j) => { if (j !== i) { try { v.pause(); } catch(_){} } });
-          try { await vidEl.play(); } catch(e) {}
+        anchor.addEventListener('targetFound', async ()=>{
+          videos.forEach((v,j)=>{ if(j!==i){ try{v.pause();}catch(_){}} });
+          try{ await vidEl.play(); }catch(e){}
         });
-        anchor.addEventListener('targetLost', () => { try { vidEl.pause(); } catch(_) {} });
+        anchor.addEventListener('targetLost', ()=>{ try{ vidEl.pause(); }catch(_){}});
       });
     }
 
-    (async () => {
-      // Aguarda MindAR iniciar a câmera antes de montar os anchors
-      await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once: true }));
-      await new Promise(res => {
-        const done = () => res();
-        sceneEl.addEventListener('arReady', done, { once: true });
-        setTimeout(done, 2000);
-      });
-      setup().catch(err => {
-        console.error(err);
-        alert(err.message);
-      });
+    (async ()=>{
+      await new Promise(res => sceneEl.hasLoaded ? res() : sceneEl.addEventListener('loaded', res, { once:true }));
+      await new Promise(res => { const done=()=>res(); sceneEl.addEventListener('arReady', done, { once:true }); setTimeout(done, 2000); });
+      setup().catch(err=>{ console.error(err); alert(err.message); });
     })();
   </script>
 </body>
